@@ -16,6 +16,8 @@
 # next.js
 /.next/
 /out/
+/generated/prisma/
+/.data/
 
 # production
 /build
@@ -30,8 +32,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
+# env files (the documented template is safe to commit)
 .env*
+!.env.example
 
 # vercel
 .vercel

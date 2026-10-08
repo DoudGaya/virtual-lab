@@ -1,0 +1,520 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TenantKind {
+  COMPANY
+  UNIVERSITY
+  RESEARCH_INSTITUTE
+  LABORATORY
+}
+
+enum MembershipRole {
+  ADMIN
+  LAB_MANAGER
+  RESEARCHER
+  REVIEWER
+  STUDENT
+  GUEST
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  UNDER_REVIEW
+  ARCHIVED
+}
+
+enum ScientificRecordStatus {
+  DRAFT
+  ACTIVE
+  SUBMITTED
+  UNDER_REVIEW
+  ACCEPTED
+  REVISION_REQUESTED
+  REJECTED
+  ARCHIVED
+}
+
+enum ReviewPriority {
+  LOW
+  NORMAL
+  HIGH
+  CRITICAL
+}
+
+enum ReviewStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REVISION_REQUESTED
+  REJECTED
+}
+
+enum InstrumentStatus {
+  READY
+  ATTENTION
+  OFFLINE
+}
+
+enum FileLifecycle {
+  QUARANTINED
+  SCANNING
+  PARSING
+  READY
+  REJECTED
+  FAILED
+  ARCHIVED
+}
+
+enum UploadStatus {
+  CREATED
+  UPLOADING
+  QUARANTINED
+  PARSING
+  READY
+  REJECTED
+  FAILED
+  EXPIRED
+}
+
+enum ParserRunStatus {
+  RUNNING
+  COMPLETED
+  COMPLETED_WITH_WARNINGS
+  FAILED
+}
+
+enum DerivedArtifactKind {
+  NORMALIZED_SPECTRUM
+  PROCESSED_SPECTRUM
+  PREVIEW
+  REPORT
+}
+
+enum OutboxStatus {
+  PENDING
+  PUBLISHED
+  FAILED
+}
+
+model Tenant {
+  id          String       @id @default(uuid()) @db.Uuid
+  slug        String       @unique @db.VarChar(80)
+  name        String       @db.VarChar(180)
+  kind        TenantKind
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  memberships Membership[]
+  projects    Project[]
+  compounds   Compound[]
+  instruments Instrument[]
+
+  @@map("tenants")
+}
+
+model User {
+  id                String             @id @default(uuid()) @db.Uuid
+  email             String             @unique @db.VarChar(254)
+  name              String             @db.VarChar(160)
+  passwordHash      String?            @map("password_hash") @db.VarChar(255)
+  emailVerifiedAt   DateTime?          @map("email_verified_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  memberships       Membership[]
+  sessions          Session[]
+  createdProjects   Project[]          @relation("ProjectCreator")
+  ownedExperiments  Experiment[]       @relation("ExperimentOwner")
+  notebookEntries   NotebookEntry[]    @relation("EntryAuthor")
+  notebookRevisions NotebookRevision[] @relation("RevisionAuthor")
+  reviewsAssigned   Review[]           @relation("ReviewAssignee")
+  reviewsSubmitted  Review[]           @relation("ReviewSubmitter")
+  uploadIntents     UploadIntent[]
+
+  @@map("users")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionToken String   @unique @map("session_token") @db.VarChar(255)
+  userId       String   @map("user_id") @db.Uuid
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("sessions")
+}
+
+model Membership {
+  id             String           @id @default(uuid()) @db.Uuid
+  tenantId       String           @map("tenant_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  role           MembershipRole
+  status         MembershipStatus @default(ACTIVE)
+  department     String?          @db.VarChar(160)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  projectMembers ProjectMember[]
+
+  @@unique([tenantId, userId])
+  @@index([userId, status])
+  @@map("memberships")
+}
+
+model Project {
+  id               String            @id @default(uuid()) @db.Uuid
+  tenantId         String            @map("tenant_id") @db.Uuid
+  publicId         String            @unique @map("public_id") @db.VarChar(32)
+  slug             String            @db.VarChar(120)
+  name             String            @db.VarChar(180)
+  domain           String            @db.VarChar(120)
+  purpose          String            @db.Text
+  status           ProjectStatus     @default(DRAFT)
+  createdById      String            @map("created_by_id") @db.Uuid
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  tenant           Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy        User              @relation("ProjectCreator", fields: [createdById], references: [id])
+  members          ProjectMember[]
+  projectCompounds ProjectCompound[]
+  samples          Sample[]
+  experiments      Experiment[]
+  originalFiles    OriginalFile[]
+  spectra          Spectrum[]
+  notebookEntries  NotebookEntry[]
+  reviews          Review[]
+  uploadIntents    UploadIntent[]
+  parserRuns       ParserRun[]
+  derivedArtifacts DerivedArtifact[]
+
+  @@unique([tenantId, slug])
+  @@unique([tenantId, id])
+  @@index([tenantId, status, updatedAt])
+  @@map("projects")
+}
+
+model ProjectMember {
+  projectId    String         @map("project_id") @db.Uuid
+  membershipId String         @map("membership_id") @db.Uuid
+  role         MembershipRole
+  addedAt      DateTime       @default(now()) @map("added_at")
+  project      Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  membership   Membership     @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, membershipId])
+  @@index([membershipId])
+  @@map("project_members")
+}
+
+model Compound {
+  id                   String            @id @default(uuid()) @db.Uuid
+  tenantId             String            @map("tenant_id") @db.Uuid
+  publicId             String            @unique @map("public_id") @db.VarChar(32)
+  preferredName        String            @map("preferred_name") @db.VarChar(180)
+  molecularFormula     String?           @map("molecular_formula") @db.VarChar(100)
+  sourceStructure      String?           @map("source_structure") @db.Text
+  canonicalStructure   String?           @map("canonical_structure") @db.Text
+  normalizationVersion String?           @map("normalization_version") @db.VarChar(80)
+  validationStatus     String            @default("PENDING") @map("validation_status") @db.VarChar(32)
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+  tenant               Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  projects             ProjectCompound[]
+
+  @@index([tenantId, preferredName])
+  @@map("compounds")
+}
+
+model ProjectCompound {
+  projectId  String   @map("project_id") @db.Uuid
+  compoundId String   @map("compound_id") @db.Uuid
+  addedAt    DateTime @default(now()) @map("added_at")
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  compound   Compound @relation(fields: [compoundId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, compoundId])
+  @@map("project_compounds")
+}
+
+model Sample {
+  id              String                 @id @default(uuid()) @db.Uuid
+  tenantId        String                 @map("tenant_id") @db.Uuid
+  projectId       String                 @map("project_id") @db.Uuid
+  publicId        String                 @unique @map("public_id") @db.VarChar(32)
+  name            String                 @db.VarChar(180)
+  source          String                 @db.VarChar(180)
+  storageLocation String?                @map("storage_location") @db.VarChar(180)
+  status          ScientificRecordStatus @default(DRAFT)
+  parentSampleId  String?                @map("parent_sample_id") @db.Uuid
+  metadata        Json                   @default("{}")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parentSample    Sample?                @relation("SampleLineage", fields: [parentSampleId], references: [id])
+  derivedSamples  Sample[]               @relation("SampleLineage")
+  spectra         Spectrum[]
+  uploadIntents   UploadIntent[]
+
+  @@index([tenantId, projectId, status])
+  @@map("samples")
+}
+
+model Experiment {
+  id          String                 @id @default(uuid()) @db.Uuid
+  tenantId    String                 @map("tenant_id") @db.Uuid
+  projectId   String                 @map("project_id") @db.Uuid
+  publicId    String                 @unique @map("public_id") @db.VarChar(32)
+  title       String                 @db.VarChar(180)
+  methodRef   String?                @map("method_ref") @db.VarChar(120)
+  status      ScientificRecordStatus @default(DRAFT)
+  ownerId     String                 @map("owner_id") @db.Uuid
+  submittedAt DateTime?              @map("submitted_at")
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  project     Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner       User                   @relation("ExperimentOwner", fields: [ownerId], references: [id])
+  spectra     Spectrum[]
+
+  @@index([tenantId, projectId, status])
+  @@map("experiments")
+}
+
+model OriginalFile {
+  id               String            @id @default(uuid()) @db.Uuid
+  tenantId         String            @map("tenant_id") @db.Uuid
+  projectId        String            @map("project_id") @db.Uuid
+  objectKey        String            @unique @map("object_key") @db.VarChar(500)
+  fileName         String            @map("file_name") @db.VarChar(255)
+  contentType      String            @map("content_type") @db.VarChar(120)
+  byteCount        BigInt            @map("byte_count")
+  sha256           String            @db.Char(64)
+  lifecycle        FileLifecycle     @default(QUARANTINED)
+  uploadedById     String            @map("uploaded_by_id") @db.Uuid
+  uploadedAt       DateTime          @default(now()) @map("uploaded_at")
+  metadata         Json              @default("{}")
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  spectra          Spectrum[]
+  uploadIntent     UploadIntent?
+  parserRuns       ParserRun[]
+  derivedArtifacts DerivedArtifact[]
+
+  @@index([tenantId, projectId, lifecycle])
+  @@index([tenantId, sha256])
+  @@map("original_files")
+}
+
+model UploadIntent {
+  id                  String        @id @default(uuid()) @db.Uuid
+  tenantId            String        @map("tenant_id") @db.Uuid
+  projectId           String        @map("project_id") @db.Uuid
+  sampleId            String?       @map("sample_id") @db.Uuid
+  requestedById       String        @map("requested_by_id") @db.Uuid
+  fileName            String        @map("file_name") @db.VarChar(255)
+  declaredContentType String        @map("declared_content_type") @db.VarChar(120)
+  expectedByteCount   BigInt        @map("expected_byte_count")
+  expectedSha256      String?       @map("expected_sha256") @db.Char(64)
+  idempotencyKey      String        @map("idempotency_key") @db.VarChar(120)
+  status              UploadStatus  @default(CREATED)
+  expiresAt           DateTime      @map("expires_at")
+  originalFileId      String?       @unique @map("original_file_id") @db.Uuid
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+  project             Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sample              Sample?       @relation(fields: [sampleId], references: [id])
+  requestedBy         User          @relation(fields: [requestedById], references: [id])
+  originalFile        OriginalFile? @relation(fields: [originalFileId], references: [id])
+
+  @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, projectId, status, expiresAt])
+  @@map("upload_intents")
+}
+
+model ParserRun {
+  id             String          @id @default(uuid()) @db.Uuid
+  tenantId       String          @map("tenant_id") @db.Uuid
+  projectId      String          @map("project_id") @db.Uuid
+  originalFileId String          @map("original_file_id") @db.Uuid
+  parserName     String          @map("parser_name") @db.VarChar(100)
+  parserVersion  String          @map("parser_version") @db.VarChar(80)
+  status         ParserRunStatus @default(RUNNING)
+  warnings       Json            @default("[]")
+  errorCode      String?         @map("error_code") @db.VarChar(100)
+  startedAt      DateTime        @default(now()) @map("started_at")
+  completedAt    DateTime?       @map("completed_at")
+  project        Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  originalFile   OriginalFile    @relation(fields: [originalFileId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, projectId, status, startedAt])
+  @@map("parser_runs")
+}
+
+model DerivedArtifact {
+  id             String              @id @default(uuid()) @db.Uuid
+  tenantId       String              @map("tenant_id") @db.Uuid
+  projectId      String              @map("project_id") @db.Uuid
+  originalFileId String              @map("original_file_id") @db.Uuid
+  objectKey      String              @unique @map("object_key") @db.VarChar(500)
+  kind           DerivedArtifactKind
+  contentType    String              @map("content_type") @db.VarChar(120)
+  byteCount      BigInt              @map("byte_count")
+  sha256         String              @db.Char(64)
+  provenance     Json
+  createdAt      DateTime            @default(now()) @map("created_at")
+  project        Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  originalFile   OriginalFile        @relation(fields: [originalFileId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, projectId, kind, createdAt])
+  @@map("derived_artifacts")
+}
+
+model Spectrum {
+  id             String                 @id @default(uuid()) @db.Uuid
+  tenantId       String                 @map("tenant_id") @db.Uuid
+  projectId      String                 @map("project_id") @db.Uuid
+  sampleId       String?                @map("sample_id") @db.Uuid
+  experimentId   String?                @map("experiment_id") @db.Uuid
+  originalFileId String                 @map("original_file_id") @db.Uuid
+  publicId       String                 @unique @map("public_id") @db.VarChar(32)
+  technique      String                 @db.VarChar(80)
+  xUnit          String                 @map("x_unit") @db.VarChar(40)
+  yUnit          String                 @map("y_unit") @db.VarChar(40)
+  pointCount     Int                    @map("point_count")
+  status         ScientificRecordStatus @default(DRAFT)
+  parserVersion  String                 @map("parser_version") @db.VarChar(80)
+  qualitySummary Json                   @default("{}") @map("quality_summary")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  project        Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sample         Sample?                @relation(fields: [sampleId], references: [id])
+  experiment     Experiment?            @relation(fields: [experimentId], references: [id])
+  originalFile   OriginalFile           @relation(fields: [originalFileId], references: [id])
+
+  @@index([tenantId, projectId, technique, status])
+  @@map("spectra")
+}
+
+model NotebookEntry {
+  id              String                 @id @default(uuid()) @db.Uuid
+  tenantId        String                 @map("tenant_id") @db.Uuid
+  projectId       String                 @map("project_id") @db.Uuid
+  publicId        String                 @unique @map("public_id") @db.VarChar(32)
+  title           String                 @db.VarChar(200)
+  status          ScientificRecordStatus @default(DRAFT)
+  authorId        String                 @map("author_id") @db.Uuid
+  currentRevision Int                    @default(1) @map("current_revision")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  project         Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author          User                   @relation("EntryAuthor", fields: [authorId], references: [id])
+  revisions       NotebookRevision[]
+
+  @@index([tenantId, projectId, status])
+  @@map("notebook_entries")
+}
+
+model NotebookRevision {
+  id          String        @id @default(uuid()) @db.Uuid
+  entryId     String        @map("entry_id") @db.Uuid
+  revision    Int
+  content     Json
+  createdById String        @map("created_by_id") @db.Uuid
+  createdAt   DateTime      @default(now()) @map("created_at")
+  entry       NotebookEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  createdBy   User          @relation("RevisionAuthor", fields: [createdById], references: [id])
+
+  @@unique([entryId, revision])
+  @@map("notebook_revisions")
+}
+
+model Review {
+  id            String         @id @default(uuid()) @db.Uuid
+  tenantId      String         @map("tenant_id") @db.Uuid
+  projectId     String         @map("project_id") @db.Uuid
+  targetType    String         @map("target_type") @db.VarChar(80)
+  targetId      String         @map("target_id") @db.Uuid
+  status        ReviewStatus   @default(PENDING)
+  priority      ReviewPriority @default(NORMAL)
+  reviewerId    String         @map("reviewer_id") @db.Uuid
+  submittedById String         @map("submitted_by_id") @db.Uuid
+  conclusion    String?        @db.Text
+  dueAt         DateTime?      @map("due_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reviewer      User           @relation("ReviewAssignee", fields: [reviewerId], references: [id])
+  submittedBy   User           @relation("ReviewSubmitter", fields: [submittedById], references: [id])
+
+  @@index([tenantId, reviewerId, status, priority])
+  @@map("reviews")
+}
+
+model Instrument {
+  id               String           @id @default(uuid()) @db.Uuid
+  tenantId         String           @map("tenant_id") @db.Uuid
+  publicId         String           @unique @map("public_id") @db.VarChar(32)
+  name             String           @db.VarChar(180)
+  manufacturer     String?          @db.VarChar(120)
+  model            String?          @db.VarChar(120)
+  serialNumber     String?          @map("serial_number") @db.VarChar(120)
+  location         String           @db.VarChar(180)
+  status           InstrumentStatus @default(READY)
+  calibrationDueAt DateTime?        @map("calibration_due_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  tenant           Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("instruments")
+}
+
+model AuditEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String   @map("tenant_id") @db.Uuid
+  projectId     String?  @map("project_id") @db.Uuid
+  actorType     String   @map("actor_type") @db.VarChar(32)
+  actorId       String   @map("actor_id") @db.Uuid
+  action        String   @db.VarChar(120)
+  resourceType  String   @map("resource_type") @db.VarChar(80)
+  resourceId    String   @map("resource_id") @db.Uuid
+  correlationId String   @map("correlation_id") @db.Uuid
+  metadata      Json     @default("{}")
+  occurredAt    DateTime @default(now()) @map("occurred_at")
+
+  @@index([tenantId, projectId, occurredAt])
+  @@index([tenantId, resourceType, resourceId])
+  @@map("audit_events")
+}
+
+model OutboxEvent {
+  id               String       @id @default(uuid()) @db.Uuid
+  tenantId         String       @map("tenant_id") @db.Uuid
+  projectId        String?      @map("project_id") @db.Uuid
+  eventType        String       @map("event_type") @db.VarChar(140)
+  aggregateType    String       @map("aggregate_type") @db.VarChar(80)
+  aggregateId      String       @map("aggregate_id") @db.Uuid
+  aggregateVersion Int          @default(1) @map("aggregate_version")
+  correlationId    String       @map("correlation_id") @db.Uuid
+  payload          Json
+  status           OutboxStatus @default(PENDING)
+  attempts         Int          @default(0)
+  createdAt        DateTime     @default(now()) @map("created_at")
+  publishedAt      DateTime?    @map("published_at")
+
+  @@index([status, createdAt])
+  @@index([tenantId, projectId, createdAt])
+  @@map("outbox_events")
+}
